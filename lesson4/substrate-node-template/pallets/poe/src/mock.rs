@@ -81,7 +81,6 @@ impl balances::Trait for Test {
 parameter_types! {
 	pub const MinLength: usize = 1;
 	pub const MaxLength: usize = 512;
-	pub const Mtest: u32 = 512;
 }
 
 impl Trait for Test {
@@ -90,12 +89,6 @@ impl Trait for Test {
 	type MinLength = MinLength;
 	type MaxLength = MaxLength;
 }
-
-
-impl TestTrait for Test {
-	type Mtest = Mtest;
-}
-
 
 pub type System = system::Module<Test>;
 pub type Balances = balances::Module<Test>;

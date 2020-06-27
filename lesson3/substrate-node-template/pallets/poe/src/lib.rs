@@ -16,8 +16,9 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+
 /// The pallet's configuration trait.
-pub trait Trait: system::Trait {
+pub trait Trait: system::Trait + timestamp::Trait {
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
     type Currency: Currency<Self::AccountId>;
 
@@ -28,12 +29,15 @@ pub trait Trait: system::Trait {
 }
 
 type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
+// Currency<AccountId>::Balance
+
 
 // This pallet's storage items.
 decl_storage! {
 	trait Store for Module<T: Trait> as Poe {
-		Proofs get(fn get_proof): map hasher(blake2_128_concat) Vec<u8> => Option<(T::AccountId, T::BlockNumber)>;
+		Proofs get(fn get_proof): map hasher(blake2_128_concat) Vec<u8> => Option<(T::AccountId, T::BlockNumber, T::Moment, Vec<u8>)>;
 		Prices get(fn get_price): map hasher(blake2_128_concat) Vec<u8> => BalanceOf<T>;
+		AccountProofs get(fn get_account_proofs): map hasher(blake2_128_concat) T::AccountId => Vec<Vec<u8>>;
 	}
 }
 
@@ -90,7 +94,7 @@ decl_module! {
 		const MaxLength: u32 = T::MaxLength::get() as u32;
 
 		#[weight = 10_000]
-		pub fn create_claim(origin, claim: Vec<u8>) -> dispatch::DispatchResult {
+		pub fn create_claim(origin, claim: Vec<u8>, memo: Vec<u8>) -> dispatch::DispatchResult {
 			let sender = ensure_signed(origin)?;
 
 			ensure!(claim.len() >= T::MinLength::get(), Error::<T>::TooShort);
@@ -99,7 +103,11 @@ decl_module! {
 			let o = Self::get_proof(&claim);
 			ensure!(None == o, Error::<T>::ProofAlreadyExist);
 
-			Proofs::<T>::insert(&claim, (sender.clone(), system::Module::<T>::block_number()));
+			Proofs::<T>::insert(&claim, (sender.clone(), system::Module::<T>::block_number(), timestamp::Module::<T>::now(), memo.clone()));
+
+			// 添加proof给对应account
+			AccountProofs::<T>::append(&sender, &claim);
+
 			Self::deposit_event(RawEvent::ClaimCreated(sender, claim));
 			Ok(())
 		}
@@ -107,8 +115,18 @@ decl_module! {
 		#[weight = 10_000]
 		pub fn revoke_claim(origin, claim:Vec<u8>) -> dispatch::DispatchResult {
 			let sender = ensure_signed(origin)?;
-			let (_acc, bn) = Self::must_get_with_owner(&sender, &claim)?;
+			let (_acc, bn, _, memo) = Self::must_get_with_owner(&sender, &claim)?;
 			Proofs::<T>::remove(&claim);
+			// 删除对应account下该proof
+			if AccountProofs::<T>::contains_key(&sender) {
+        let mut vec = AccountProofs::<T>::get(&sender);
+        vec.retain(|x| x != &claim);
+        if vec.len() > 0{
+        	AccountProofs::<T>::insert(&sender, vec);
+        }else{
+        	AccountProofs::<T>::remove(&sender);
+        }
+      }
 			Self::deposit_event(RawEvent::ClaimRevoked(sender, claim, bn));
 			Ok(())
 		}
@@ -116,10 +134,23 @@ decl_module! {
 		#[weight = 10_000]
 		pub fn transfer_claim(origin, claim: Vec<u8>, dest: <T::Lookup as StaticLookup>::Source) -> dispatch::DispatchResult {
 			let sender = ensure_signed(origin)?;
-			let (_acc, _bn) = Self::must_get_with_owner(&sender, &claim)?;
+			let (_acc, _bn, _, memo) = Self::must_get_with_owner(&sender, &claim)?;
 			let dest = T::Lookup::lookup(dest)?;
 			let bn = system::Module::<T>::block_number();
-			Proofs::<T>::insert(&claim, (dest.clone(), bn));
+			Proofs::<T>::insert(&claim, (dest.clone(), bn, timestamp::Module::<T>::now(), memo.clone()));
+			// 删除对应account下该proof
+			if AccountProofs::<T>::contains_key(&sender) {
+        let mut vec = AccountProofs::<T>::get(&sender);
+        vec.retain(|x| x != &claim);
+        if vec.len() > 0{
+        	AccountProofs::<T>::insert(&sender, vec);
+        }else{
+        	AccountProofs::<T>::remove(&sender);
+        }
+      }
+      // 添加proof给对应account
+      AccountProofs::<T>::append(&sender, &claim);
+
 			Self::deposit_event(RawEvent::ClaimTransferred(sender, dest, claim, bn));
 			Ok(())
 		}
@@ -131,7 +162,7 @@ decl_module! {
 		)]
 		pub fn ask_claim(origin, claim: Vec<u8>, price: BalanceOf<T>) -> dispatch::DispatchResult {
 			let sender = ensure_signed(origin)?;
-			let (_acc, _bn) = Self::must_get_with_owner(&sender, &claim)?;
+			let (_acc, _bn, _, _memo) = Self::must_get_with_owner(&sender, &claim)?;
 			let old_price = Self::get_price(&claim);
 			if old_price != price {
 				Prices::<T>::insert(&claim, &price);
@@ -154,13 +185,18 @@ decl_module! {
 			ensure!(ask_price > 0.into(), Error::<T>::ClaimNotForSale);
 			ensure!(buy_price >= ask_price, Error::<T>::PriceTooLow);
 
-			let (owner, _bn) = o.expect("Not None ;qed");
+			let (owner, _bn, _, memo) = o.expect("Not None ;qed");
 			ensure!(owner != sender, Error::<T>::CannotBuyYourOwnClaim);
 			T::Currency::transfer(&sender, &owner, ask_price, ExistenceRequirement::KeepAlive)?;
 
 			let bn = system::Module::<T>::block_number();
-			Proofs::<T>::insert(&claim, (sender.clone(), bn));
+			Proofs::<T>::insert(&claim, (sender.clone(), bn, timestamp::Module::<T>::now(), memo.clone()));
 			Prices::<T>::remove(&claim);
+
+			// 添加proof给对应account
+			AccountProofs::<T>::append(&sender, &claim);
+
+
 			Self::deposit_event(RawEvent::ClaimSold(owner, sender, claim));
 			Ok(())
 		}
@@ -168,12 +204,12 @@ decl_module! {
 }
 
 impl<T> Module<T> where T: Trait {
-    pub(crate) fn must_get_with_owner(sender: &T::AccountId, claim: &Vec<u8>) -> Result<(T::AccountId, T::BlockNumber), dispatch::DispatchError> {
+    pub(crate) fn must_get_with_owner(sender: &T::AccountId, claim: &Vec<u8>) -> Result<(T::AccountId, T::BlockNumber, T::Moment, Vec<u8>), dispatch::DispatchError> {
         let o = Self::get_proof(&claim);
         ensure!(None != o, Error::<T>::ProofNotExist);
-        let (acc, bn) = o.expect("must be a Some ;qed");
+        let (acc, bn, time, memo) = o.expect("must be a Some ;qed");
         ensure!(&acc == sender, Error::<T>::NotClaimOwner);
-        Ok((acc, bn))
+        Ok((acc, bn, time, memo))
     }
 }
 

@@ -1,6 +1,6 @@
 // Creating mock runtime here
 
-use crate::{Module, Trait};
+use crate::{Module, Trait, TestTrait};
 use sp_core::H256;
 use balances;
 use frame_support::{
