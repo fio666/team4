@@ -13,6 +13,7 @@ import Interactor from './Interactor';
 import Metadata from './Metadata';
 import NodeInfo from './NodeInfo';
 import TemplateModule from './TemplateModule';
+import PeoModule from './PeoModule';
 import Transfer from './Transfer';
 import Upgrade from './Upgrade';
 
@@ -67,6 +68,9 @@ function Main () {
           </Grid.Row>
           <Grid.Row>
             <TemplateModule accountPair={accountPair} />
+          </Grid.Row>
+          <Grid.Row>
+            <PeoModule accountPair={accountPair} />
           </Grid.Row>
         </Grid>
         <DeveloperConsole />
