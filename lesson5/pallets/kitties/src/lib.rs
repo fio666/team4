@@ -1,15 +1,17 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use codec::{Encode, Decode};
-use frame_support::{decl_module, decl_storage, decl_error, decl_event, ensure, StorageValue, StorageMap, traits::Randomness};
+use frame_support::{decl_module, decl_storage, decl_error, decl_event,
+	ensure, StorageValue, StorageMap, traits::Randomness};
 use sp_io::hashing::blake2_128;
-use frame_system::ensure_signed;
+use frame_system::{self as system, ensure_signed};
 use sp_runtime::{DispatchError, DispatchResult};
 
 #[derive(Encode, Decode)]
 pub struct Kitty(pub [u8; 16]);
 
 pub trait Trait: frame_system::Trait {
+	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
 }
 
 decl_storage! {
@@ -62,7 +64,7 @@ decl_module! {
 			let kitty = Kitty(dna);
 
 			// 作业：补完剩下的部分
-			Self::insert_kitty(sender, kitty_id, kitty);
+			Self::insert_kitty(&sender, &kitty_id, kitty);
 
 			Self::deposit_event(RawEvent::KittyCreated(sender, kitty_id));
 
@@ -101,7 +103,7 @@ impl<T: Trait> Module<T> {
 		Ok(kitty_id)
 	}
 
-	fn insert_kitty(owner: T::AccountId, kitty_id: u32, kitty: Kitty) {
+	fn insert_kitty(owner: &T::AccountId, kitty_id: &u32, kitty: Kitty) {
 		// 作业：完成方法
 		Kitties::insert(kitty_id, kitty);
 		KittiesCount::put(kitty_id + 1);
@@ -130,7 +132,7 @@ impl<T: Trait> Module<T> {
 			new_dna[i] = combine_dna(kitty1_dna[i], kitty2_dna[i], selector[i]);
 		}
 
-		Self::insert_kitty(sender, kitty_id, Kitty(new_dna));
+		Self::insert_kitty(&sender, &kitty_id, Kitty(new_dna));
 
 		Ok(())
 	}
